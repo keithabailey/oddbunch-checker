@@ -30,8 +30,24 @@ python3 -m venv .venv && .venv/bin/pip install -e .
 .venv/bin/playwright install chromium     # only needed for approve / inspect-form
 .venv/bin/oddbunch init --email you@example.com
 $EDITOR ~/.oddbunch/prefs.yaml            # set remove, replace_with, notify
-.venv/bin/oddbunch install-schedule       # check Mon 14:30; remind Mon 19:30 and Tue 18:00
+.venv/bin/oddbunch install-schedule       # one launchd agent; see Scheduling
 ```
+
+## Scheduling
+
+`install-schedule` writes one launchd agent that runs `oddbunch tick` at login, on wake and every
+30 minutes. `tick` works out what is due and does it once:
+
+| From | Action |
+|---|---|
+| Monday 14:30 | Check the menu and send the proposal (retried on each tick until the menu is posted) |
+| Monday 16:30 | One "menu not posted yet" notice, if it still isn't |
+| Monday 19:30 | Reminder, if you haven't approved or skipped |
+| Tuesday 18:00 | Last-chance reminder |
+
+If the Mac is off or asleep at those times, the step runs as soon as it is back on, still inside the
+window. A late start sends a single message rather than every missed one. Outside the window `tick`
+exits immediately without touching the network. Logs go to `~/.oddbunch/logs/`.
 
 ## Personal data stays out of the repo
 
@@ -52,7 +68,8 @@ Anything the form needs can be given at run time instead of being stored:
 | Command | What it does |
 |---|---|
 | `oddbunch check` | Fetch this week's menu (retries if not yet posted), propose a swap, notify. Safe to re-run. |
-| `oddbunch remind` | Re-notify if the proposal is unanswered; runs the check if it never ran. |
+| `oddbunch tick` | Do whatever is due now. launchd runs this; you rarely need to. |
+| `oddbunch check --renotify` | Run the check by hand, or resend this week's proposal. |
 | `oddbunch status` | Show this week's proposal and submissions. |
 | `oddbunch approve` | Fill the form for the next swap. You review and click Submit. |
 | `oddbunch approve --submit` | Also click Submit. Stops and hands over if a CAPTCHA challenge appears. |

@@ -1,4 +1,4 @@
-"""Command line: init | check | remind | approve | skip | status | history | like | dislike | inspect-form | install-schedule."""
+"""Command line: init | check | tick | approve | skip | status | history | like | dislike | inspect-form | install-schedule."""
 
 from __future__ import annotations
 
@@ -63,10 +63,10 @@ def check(no_retry, renotify):
 
 
 @cli.command()
-def remind():
-    """Re-notify if this week's proposal is unanswered (runs the check if it never ran)."""
+def tick():
+    """Do whatever is due now (used by launchd at login, on wake and every 30 min)."""
     s = _store()
-    click.echo(flow.run_remind(s, s.load_prefs(), now()))
+    click.echo(f"{now().isoformat(timespec='seconds')} {flow.run_tick(s, s.load_prefs(), now())}")
 
 
 @cli.command()
@@ -254,10 +254,9 @@ def inspect_form():
 @click.option("--load/--no-load", default=True, help="Load the agents into launchd now.")
 @click.option("--label-prefix", default="local.oddbunch", show_default=True)
 def install_schedule(load, label_prefix):
-    """Install launchd agents: check Mon 14:30; remind Mon 19:30 and Tue 18:00."""
+    """Install the launchd agent: runs `tick` at login, on wake and every 30 minutes."""
     s = _store()
-    for p in schedule.install(s.logs_dir, label_prefix=label_prefix, load=load):
-        click.echo(f"Wrote {p}")
+    click.echo(f"Wrote {schedule.install(s.logs_dir, label_prefix=label_prefix, load=load)}")
 
 
 def main():

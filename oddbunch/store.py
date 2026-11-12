@@ -106,6 +106,7 @@ class Store:
         self.prefs_path = self.home / "prefs.yaml"
         self.log_path = self.home / "log.csv"
         self.pending_path = self.home / "pending.json"
+        self.state_path = self.home / "state.json"
         self.history_dir = self.home / "history"
         self.logs_dir = self.home / "logs"
         self.profile_dir = self.home / "profile"
@@ -163,6 +164,14 @@ class Store:
     def save_pending(self, pending: dict) -> None:
         self.ensure_dirs()
         self.pending_path.write_text(json.dumps(pending, indent=2))
+
+    # small scheduler state (e.g. which week's "not posted" notice was sent)
+    def load_state(self) -> dict:
+        return json.loads(self.state_path.read_text()) if self.state_path.exists() else {}
+
+    def save_state(self, state: dict) -> None:
+        self.ensure_dirs()
+        self.state_path.write_text(json.dumps(state, indent=2))
 
     # history snapshots
     def save_snapshot(self, menu, box: str) -> Path:
