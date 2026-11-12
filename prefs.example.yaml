@@ -1,0 +1,38 @@
+# Odd Bunch box check preferences. Edit by hand; the tool also appends to the lists.
+
+# Account email for the substitution form. Can also come from ODDBUNCH_EMAIL or --email.
+email: you@example.com
+
+region: west          # west = BC & AB, east = ON & QC, prairie = SK & MB
+box: large-box
+timezone: America/Vancouver
+free_swaps_only: true # paid ($0.99) swaps are only listed, and need --allow-paid
+
+# Items to swap out, in priority order. The first one found in the box gets the free swap.
+remove:
+  - Gooseberries
+  - Seafood Mushrooms
+
+# Replacements in order of preference. The first one the form offers that week is used.
+replace_with:
+  - Asian Pears
+  - Apples
+  - Satsumas
+
+# Extra spellings to treat as the same item, e.g. "mandarin oranges: clementines".
+aliases: {}
+
+# Substitution form field labels, once confirmed on a live Monday (optional).
+form:
+  email_label:
+  remove_label:
+  replace_label:
+
+notify:
+  channels: [ntfy, macos]
+  ntfy_server: https://ntfy.sh
+  ntfy_topic:          # pick something long and random; public topics are readable by anyone
+
+check:
+  retries: 6           # menu not posted yet: retry this many times...
+  retry_minutes: 20    # ...this far apart
