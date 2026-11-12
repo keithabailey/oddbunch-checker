@@ -1,4 +1,4 @@
-"""Command line: init | check | tick | status | options | approve | skip | history | like | dislike | install-schedule."""
+"""Command line: init | check | tick | status | options | approve | skip | history | like | dislike | health | install-schedule."""
 
 from __future__ import annotations
 
@@ -172,15 +172,8 @@ def approve(swap, from_box, name, email, fields, do_submit, allow_paid, yes):
 
     from . import submit as submit_mod
 
-    fill = submit_mod.FormFill(
-        name=name, email=email,
-        region_label=plan.region["label"], region=plan.region_value,
-        subscription_label=plan.subscription_field["label"], subscription=plan.subscription,
-        remove_label=plan.remove_field["label"], remove_option=remove_option,
-        box_label=plan.box_field["label"], box=choice.box,
-        add_label=choice.label, add_option=choice.option,
-        extra=dict(_parse_pair(f, "--field") for f in fields),
-    )
+    fill = submit_mod.fill_for(plan, name, email, remove_option, choice,
+                               dict(_parse_pair(f, "--field") for f in fields))
     click.echo(f"Opening the form: {remove} -> {choice.name} (from the {choice.box} list)"
                + (" [paid $0.99]" if paid else " [free]"))
     res = submit_mod.run(fill, s.profile_dir, s.history_dir, submit=do_submit)
@@ -274,6 +267,25 @@ def options():
     for want in prefs.replace_with:
         hit = plan.find_replacement([want], prefs.get("replacement_boxes"), prefs.aliases)
         click.echo(f"  {want}: " + (f"available from the {hit.box} list" if hit else "not offered this week"))
+
+
+@cli.command()
+@click.option("--browser/--no-browser", default=True, show_default=True,
+              help="Also fill the form headless with dummy details (never submitted).")
+def health(browser):
+    """Check the menu page and substitution form still look the way this tool expects."""
+    from . import health as health_mod
+
+    s = _store()
+    try:
+        report = health_mod.run(s, s.load_prefs(), browser=browser)
+    except health_mod.Unreachable as exc:
+        raise click.ClickException(f"Could not reach the site ({exc}). Nothing was concluded.")
+    path = health_mod.record(s, report, now())
+    click.echo(report.text())
+    click.echo(f"Saved to {path}" + ("" if report.at(health_mod.BROKEN) else "; baseline updated"))
+    if report.at(health_mod.BROKEN):
+        sys.exit(1)
 
 
 @cli.command("install-schedule")

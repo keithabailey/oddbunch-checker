@@ -22,6 +22,8 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .form import EMAIL_LABEL, NAME_LABEL
+
 SUBS_URL = "https://www.oddbunch.ca/pages/substitutions"
 CONFIRM_RE = re.compile(r"thank|received|submitted|success", re.I)
 
@@ -45,6 +47,19 @@ class FormFill:
     add_label: str
     add_option: str
     extra: dict = field(default_factory=dict)    # label -> value, if the form grows new text fields
+
+
+def fill_for(plan, name: str, email: str, remove_option: str, choice, extra: dict | None = None) -> FormFill:
+    """The FormFill for one swap, with every label taken from the form's own config."""
+    return FormFill(
+        name=name, email=email,
+        region_label=plan.region["label"], region=plan.region_value,
+        subscription_label=plan.subscription_field["label"], subscription=plan.subscription,
+        remove_label=plan.remove_field["label"], remove_option=remove_option,
+        box_label=plan.box_field["label"], box=choice.box,
+        add_label=choice.label, add_option=choice.option,
+        extra=dict(extra or {}),
+    )
 
 
 def _open(profile_dir: Path, url: str, headless: bool):
@@ -93,11 +108,11 @@ def _fill_all(page, fill: FormFill, timeout_s: int) -> None:
     """Fill both pages. Raises SubmitError naming the step that failed."""
     step = "loading the form"
     try:
-        _field(page, "Email Address", timeout_s * 1000)
-        step = "Full Name"
-        _field(page, "Full Name").fill(fill.name)
-        step = "Email Address"
-        _field(page, "Email Address").fill(fill.email)
+        _field(page, EMAIL_LABEL, timeout_s * 1000)
+        step = NAME_LABEL
+        _field(page, NAME_LABEL).fill(fill.name)
+        step = EMAIL_LABEL
+        _field(page, EMAIL_LABEL).fill(fill.email)
         step = fill.region_label
         _select(page, fill.region_label, fill.region)
         step = fill.subscription_label
@@ -120,26 +135,28 @@ def _fill_all(page, fill: FormFill, timeout_s: int) -> None:
 
 
 def run(fill: FormFill, profile_dir: Path, shots_dir: Path, submit: bool = False, *,
-        url: str = SUBS_URL, headless: bool = False, wait: bool = True, timeout_s: int = 45) -> dict:
+        url: str = SUBS_URL, headless: bool = False, wait: bool = True, timeout_s: int = 45,
+        quiet: bool = False) -> dict:
     """Fill the form. With submit=False (default) it stops for you to review and click Submit."""
     profile_dir.mkdir(parents=True, exist_ok=True)
     shots_dir.mkdir(parents=True, exist_ok=True)
     stamp = dt.datetime.now().strftime("%Y-%m-%d_%H%M%S")
     pw, ctx, page = _open(profile_dir, url, headless)
     result = {"result": "", "screenshot": None, "error": None}
+    say = (lambda *_: None) if quiet else print
     try:
         try:
             _fill_all(page, fill, timeout_s)
         except SubmitError as exc:
             result["error"] = str(exc)
-            print(f"Stopped: {exc}. Finish the form by hand, then close the browser window.")
+            say(f"Stopped: {exc}. Finish the form by hand, then close the browser window.")
             if wait:
                 _wait_for_close(page)
             result["result"] = "incomplete, handed over"
             return result
 
         if not submit:
-            print("Form filled. Check it, click Submit yourself, then close the browser window.")
+            say("Form filled. Check it, click Submit yourself, then close the browser window.")
             if wait:
                 _wait_for_close(page)
             result["result"] = "prefilled"
@@ -148,7 +165,7 @@ def run(fill: FormFill, profile_dir: Path, shots_dir: Path, submit: bool = False
         page.locator("powr-form-builder").get_by_role("button", name="Submit").click()
         page.wait_for_timeout(3000)
         if _challenge_visible(page):
-            print("A CAPTCHA challenge appeared. Complete it by hand, then close the browser window.")
+            say("A CAPTCHA challenge appeared. Complete it by hand, then close the browser window.")
             if wait:
                 _wait_for_close(page)
             result["result"] = "handed over (captcha)"

@@ -9,6 +9,7 @@ from zoneinfo import ZoneInfo
 import requests
 
 from . import form as form_mod
+from . import health as health_mod
 from . import menu as menu_mod
 from . import notify as notify_mod
 from . import window
@@ -39,6 +40,9 @@ def format_message(pending: dict, prefs: Prefs, now: dt.datetime, last_chance: b
     elif free_form is not None:
         lines.append(f"Free swap: {p.free.remove} -> none of your replacements are on the form this week; "
                      "run 'oddbunch options'")
+    elif pending.get("form_error"):
+        lines.append(f"Free swap: {p.free.remove} -> {', '.join(p.free.candidates[:3]) or '?'}. "
+                     f"Could not read the substitution form ({pending['form_error']}); run 'oddbunch health'")
     elif p.free.candidates:
         first, rest = p.free.candidates[0], p.free.candidates[1:4]
         tail = f" (then {', '.join(rest)})" if rest else ""
@@ -127,19 +131,21 @@ def run_check(
         return None
 
     proposal = evaluate(m.names, prefs.remove, prefs.replace_with, prefs.aliases)
-    form_info = None
+    form_info, form_error = None, None
     if proposal.free:
         try:
             comps = (form_fetch or form_mod.fetch_components)()
             plan = form_mod.plan_for(comps, region, box, prefs.get("subscription"))
             form_info = form_choices(plan, proposal, prefs)
         except Exception as exc:  # the proposal still stands on the menu alone
-            print(f"Could not read the substitution form: {exc}")
+            form_error = str(exc).splitlines()[0] if str(exc) else type(exc).__name__
+            print(f"Could not read the substitution form: {form_error}")
     pending = {
         "week": week,
         "menu": m.to_dict(),
         "proposal": proposal.to_dict(),
         "form": form_info,
+        "form_error": form_error,
         "status": "pending" if proposal.free else "no-action",
         "submissions": [],
         "created_at": now.isoformat(),
@@ -227,10 +233,23 @@ def _tick_once(store: Store, prefs: Prefs, now: dt.datetime, fetch, notifier) ->
     return f"reminded ({label})"
 
 
+def _weekly_health(store: Store, prefs: Prefs, now: dt.datetime, notifier) -> None:
+    """Once a week, before the check: confirm the site still looks the way the tool expects."""
+    tz = prefs.get("timezone")
+    if not window.is_open(now, tz) or now < _at(now, tz, 0, CHECK_FROM):
+        return
+    week_key = _at(now, tz, 0, dt.time(0)).date().isoformat()
+    try:
+        print(health_mod.weekly(store, prefs, now, week_key, notifier))
+    except Exception as exc:  # the health check must never stop the box check
+        print(f"health: check failed to run ({exc})")
+
+
 def run_tick(store: Store, prefs: Prefs, now: dt.datetime, *, fetch=None,
              notifier=notify_mod.notify, sleep=time.sleep, clock=None) -> str:
     """Do whatever is due right now.
 
+    The first run inside each week's window also runs the site health check.
     launchd starts this at login/boot, at Monday 14:30 and at the two reminder
     times (a time missed while asleep fires once on wake). Outside the window, or
     once the week's check has succeeded, it exits at once without touching the
@@ -239,6 +258,7 @@ def run_tick(store: Store, prefs: Prefs, now: dt.datetime, *, fetch=None,
     """
     tz = prefs.get("timezone")
     retry = prefs.section("check")["retry_minutes"]
+    _weekly_health(store, prefs, now, notifier)
     t = now
     while True:
         status = _tick_once(store, prefs, t, fetch, notifier)

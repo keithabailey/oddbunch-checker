@@ -61,6 +61,29 @@ starts at login or boot and at three times a week:
 
 Logs go to `~/.oddbunch/logs/`.
 
+## Site health check
+
+The tool depends on the Odd Bunch site staying the way it is today, so it checks every week. The first
+`tick` inside each week's window runs `oddbunch health` before the menu check. It notifies only if
+something is found.
+
+| Level | Meaning | Examples |
+|---|---|---|
+| broken | The check or the form fill will fail, or give a wrong answer | menu layout no longer parses; the page embeds a different form; Full Name or Email field renamed; a new required field; the form gains a page; the deadline wording changes |
+| changed | Something moved but the tool should still work | a box added to or removed from "Box to choose from"; the rules text edited; quantities missing from the menu |
+| warning | The check could not run fully | the headless browser would not start |
+
+- **What it reads:** the menu page, the substitutions page and the POWR form configuration (three
+  plain GETs), then fills both form pages headless with dummy details and stops before Submit. Nothing
+  is sent. `--no-browser` skips the fill.
+- **Baseline:** "changed" is judged against `~/.oddbunch/baseline.json`, which holds structure only
+  (field labels, region and box lists, page layout, the rules text), never the weekly items. A change
+  is reported once and then accepted; a broken run leaves the baseline alone, so it keeps reporting
+  until the code is fixed.
+- **Reports:** each run is saved to `~/.oddbunch/health/`. A network failure is not treated as a site
+  change; the next scheduled run tries again.
+- **By hand:** `oddbunch health` prints the report and exits 1 if anything is broken.
+
 ## Personal data stays out of the repo
 
 Everything personal lives in `~/.oddbunch/` (override with `ODDBUNCH_HOME`): `prefs.yaml`, `log.csv`,
@@ -92,6 +115,7 @@ Anything the form needs can be given at run time instead of being stored:
 | `oddbunch skip` | No swap this week. |
 | `oddbunch history` | Recent weeks, and how often each unwanted item turned up. |
 | `oddbunch like ITEM [--top]` / `dislike ITEM [--top]` | Add to `replace_with` / `remove`. |
+| `oddbunch health [--no-browser]` | Check the site still matches what the tool expects (also runs weekly). |
 
 ## Status
 
@@ -107,6 +131,7 @@ the confirmation looks like. The form sends a confirmation email, which is the s
 .venv/bin/pip install -e '.[dev]' && .venv/bin/pytest
 ```
 
-`tests/fixtures/` holds a trimmed copy of the public menu block and the form configuration from the
-week of 11 November 2026. `tests/test_submit.py` drives the filler in headless Chromium against a mock
+`tests/fixtures/` holds a trimmed copy of the public menu block, the form configuration from the
+week of 11 November 2026 and the full POWR response from 12 November 2026 (used by the health tests,
+which break a copy of it in each way the check should catch). `tests/test_submit.py` drives the filler in headless Chromium against a mock
 form built from that configuration (run `playwright install chromium` first).

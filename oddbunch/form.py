@@ -24,7 +24,11 @@ from .menu import USER_AGENT
 FORM_UNIQUE_LABEL = "1476dcbf_1758738507"
 SSR_URL = "https://view.powr.io/api/ssr/shadow?unique_label={label}&storefront=shopify"
 REGION_OPTIONS = {"west": "BC / AB", "east": "ON / QC", "prairie": "SK / MB"}
-KEEP_KEYS = ("idx", "type", "label", "options", "required", "conditionalElement", "conditionalValue")
+KEEP_KEYS = ("idx", "type", "label", "options", "required", "conditionalElement", "conditionalValue",
+             "firstNameLabel")
+# Text fields the browser fills by label (see submit.py); the health check confirms they still exist.
+NAME_LABEL = "Full Name"
+EMAIL_LABEL = "Email Address"
 
 
 class FormError(Exception):
@@ -34,12 +38,12 @@ class FormError(Exception):
 def parse_components(html: str) -> list[dict]:
     dec = json.JSONDecoder()
     out, seen = [], set()
-    for m in re.finditer(r'\{"idx":"', html):
+    for m in re.finditer(r'\{"(?:idx|type)":"', html):
         try:
             obj, _ = dec.raw_decode(html, m.start())
         except ValueError:
             continue
-        if obj.get("idx") in seen:
+        if not isinstance(obj, dict) or "idx" not in obj or "type" not in obj or obj["idx"] in seen:
             continue
         seen.add(obj["idx"])
         out.append({k: obj.get(k) for k in KEEP_KEYS})
@@ -48,10 +52,18 @@ def parse_components(html: str) -> list[dict]:
     return out
 
 
-def fetch_components(label: str = FORM_UNIQUE_LABEL, timeout: int = 30) -> list[dict]:
+def fetch_ssr(label: str = FORM_UNIQUE_LABEL, timeout: int = 30) -> str:
     resp = requests.get(SSR_URL.format(label=label), headers={"User-Agent": USER_AGENT}, timeout=timeout)
     resp.raise_for_status()
-    return parse_components(resp.text)
+    return resp.text
+
+
+def fetch_components(label: str = FORM_UNIQUE_LABEL, timeout: int = 30) -> list[dict]:
+    return parse_components(fetch_ssr(label, timeout))
+
+
+def _label(c: dict) -> str:
+    return (c.get("label") or "").lower()
 
 
 def item_name(option: str) -> str:
@@ -83,7 +95,7 @@ class FormPlan:
         self.region_value = region_value
         self.subscription = subscription
         region = self._one(lambda c: c["type"] == "select" and not c.get("conditionalElement")
-                           and c["label"].lower().startswith("your region"), "Your Region")
+                           and _label(c).startswith("your region"), "Your Region")
         if region_value not in region["options"]:
             raise FormError(f"region {region_value!r} not offered; form has {region['options']}")
         self.region = region
@@ -109,7 +121,7 @@ class FormPlan:
     def _child(self, parent: dict, value: str, prefix: str) -> dict:
         return self._one(lambda c: c.get("conditionalElement") == parent["idx"]
                          and c.get("conditionalValue") == value
-                         and c["label"].lower().startswith(prefix), f"{prefix} ({value})")
+                         and _label(c).startswith(prefix), f"{prefix} ({value})")
 
     @property
     def remove_options(self) -> list[str]:
