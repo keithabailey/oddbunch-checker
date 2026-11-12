@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 
 import requests
 
+from . import form as form_mod
 from . import menu as menu_mod
 from . import notify as notify_mod
 from . import window
@@ -32,7 +33,13 @@ def format_message(pending: dict, prefs: Prefs, now: dt.datetime, last_chance: b
         lines.append("Box is fine, no action needed.")
         return title, "\n".join(lines)
     lines.append("Flagged: " + ", ".join(p.flagged))
-    if p.free.candidates:
+    free_form = (pending.get("form") or {}).get("free")
+    if free_form and free_form.get("name"):
+        lines.append(f"Free swap: {p.free.remove} -> {free_form['name']} (from the {free_form['box']} list)")
+    elif free_form is not None:
+        lines.append(f"Free swap: {p.free.remove} -> none of your replacements are on the form this week; "
+                     "run 'oddbunch options'")
+    elif p.free.candidates:
         first, rest = p.free.candidates[0], p.free.candidates[1:4]
         tail = f" (then {', '.join(rest)})" if rest else ""
         lines.append(f"Free swap: {p.free.remove} -> {first}{tail}")
@@ -43,6 +50,25 @@ def format_message(pending: dict, prefs: Prefs, now: dt.datetime, last_chance: b
     lines.append(f"Deadline: {window.fmt(closes, tz)}")
     lines.append("Run: oddbunch approve  |  oddbunch skip")
     return title, "\n".join(lines)
+
+
+def form_choices(plan, proposal: Proposal, prefs: Prefs) -> dict:
+    """Concrete form selections for each swap, in the order they would be submitted."""
+    used: list[str] = []
+    out = {"free": None, "paid": []}
+    for i, swap in enumerate(([proposal.free] if proposal.free else []) + proposal.paid):
+        choice = plan.find_replacement(swap.candidates, prefs.get("replacement_boxes"), prefs.aliases,
+                                       exclude=used)
+        entry = {"remove": swap.remove, "remove_option": plan.remove_option(swap.remove, prefs.aliases),
+                 "box": choice.box if choice else None, "option": choice.option if choice else None,
+                 "name": choice.name if choice else None}
+        if choice:
+            used.append(choice.name)
+        if i == 0:
+            out["free"] = entry
+        else:
+            out["paid"].append(entry)
+    return out
 
 
 def run_check(
@@ -56,6 +82,7 @@ def run_check(
     retries: int | None = None,
     force_notify: bool = False,
     notify_not_posted: bool = True,
+    form_fetch=None,
 ) -> dict | None:
     """Fetch this week's menu, build a proposal, notify. Safe to run more than once a week."""
     tz = prefs.get("timezone")
@@ -100,10 +127,19 @@ def run_check(
         return None
 
     proposal = evaluate(m.names, prefs.remove, prefs.replace_with, prefs.aliases)
+    form_info = None
+    if proposal.free:
+        try:
+            comps = (form_fetch or form_mod.fetch_components)()
+            plan = form_mod.plan_for(comps, region, box, prefs.get("subscription"))
+            form_info = form_choices(plan, proposal, prefs)
+        except Exception as exc:  # the proposal still stands on the menu alone
+            print(f"Could not read the substitution form: {exc}")
     pending = {
         "week": week,
         "menu": m.to_dict(),
         "proposal": proposal.to_dict(),
+        "form": form_info,
         "status": "pending" if proposal.free else "no-action",
         "submissions": [],
         "created_at": now.isoformat(),
@@ -113,7 +149,8 @@ def run_check(
     store.save_pending(pending)
     proposed = ""
     if proposal.free:
-        first = proposal.free.candidates[0] if proposal.free.candidates else "?"
+        chosen = ((form_info or {}).get("free") or {}).get("name")
+        first = chosen or (proposal.free.candidates[0] if proposal.free.candidates else "?")
         proposed = f"{proposal.free.remove} -> {first}"
     store.upsert_log(
         week,

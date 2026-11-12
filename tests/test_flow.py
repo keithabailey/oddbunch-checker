@@ -38,7 +38,7 @@ def test_fresh_menu_proposes_and_is_idempotent(store, fixture_html):
     assert len(note.calls) == 1
     title, msg, _ = note.calls[0]
     assert "NOV 18 - NOV 21" in title
-    assert "Gooseberries -> Asian Pears (then Apples, Satsumas)" in msg
+    assert "Gooseberries -> Asian Pears (from the All Fruit list)" in msg
     assert "Tue 17 Nov 9:55pm" in msg
     assert (store.history_dir / "2026-11-18_west_large-box.json").exists()
     assert store.read_log()[0]["proposed"] == "Gooseberries -> Asian Pears"

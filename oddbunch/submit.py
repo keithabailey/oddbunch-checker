@@ -1,13 +1,18 @@
-"""Fill the substitution form in a visible browser.
+"""Fill (and optionally submit) the substitution form in a visible browser.
 
-Status: the form has not yet been seen live (it only renders Monday 2pm to Tuesday
-11:55pm ET). Field detection is heuristic until the labels are confirmed; run
-``oddbunch inspect-form`` on the first open Monday and record the labels under
-``form:`` in prefs.yaml.
+The form is a two-page POWR form inside the ``powr-form-builder`` element (an open
+shadow root, which Playwright reaches directly):
 
-Guardrails: this never solves, bypasses or outsources a CAPTCHA, and uses no
-stealth or fingerprint-masking plugins. If a challenge appears it hands the window
-to you. Default mode only fills the form; you click Submit yourself.
+  page 1  Full Name, Email Address, Your Region, Your Subscription (<region>),
+          Item to Remove (<box> - <region>)                              -> Next
+  page 2  Box to choose from? (<region>), Item to Add (<box> - <region>) -> Submit
+
+Field labels and option texts come from ``form.FormPlan`` (read from POWR's config),
+so the browser only selects values that are known to exist.
+
+Guardrails: this never solves, bypasses or outsources a CAPTCHA and uses no stealth
+or fingerprint-masking plugins. If a challenge appears it hands the window to you.
+Default mode only fills the form; you click Submit yourself.
 """
 
 from __future__ import annotations
@@ -17,13 +22,8 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .evaluate import normalise
-
 SUBS_URL = "https://www.oddbunch.ca/pages/substitutions"
-
-EMAIL_HINTS = [r"e-?mail"]
-REMOVE_HINTS = [r"remove", r"swap(ped)? out", r"don.?t want", r"take out", r"item to (swap|replace)"]
-REPLACE_HINTS = [r"replace(ment| with)", r"instead", r"substitut(e|ion)\b.*(with|item)", r"would (you )?like", r"swap (it )?for"]
+CONFIRM_RE = re.compile(r"thank|received|submitted|success", re.I)
 
 
 class SubmitError(Exception):
@@ -32,87 +32,29 @@ class SubmitError(Exception):
 
 @dataclass
 class FormFill:
+    name: str
     email: str
-    remove: str
-    candidates: list[str]
-    labels: dict = field(default_factory=dict)   # email_label / remove_label / replace_label
-    extra: dict = field(default_factory=dict)    # label -> value, for any other fields
+    region_label: str
+    region: str
+    subscription_label: str
+    subscription: str
+    remove_label: str
+    remove_option: str
+    box_label: str
+    box: str
+    add_label: str
+    add_option: str
+    extra: dict = field(default_factory=dict)    # label -> value, if the form grows new text fields
 
 
-DESCRIBE_JS = """
-() => Array.from(document.querySelectorAll('input, select, textarea')).filter(e => e.type !== 'hidden').map(e => {
-  let label = '';
-  if (e.id) { const l = document.querySelector(`label[for="${CSS.escape(e.id)}"]`); if (l) label = l.innerText; }
-  if (!label && e.closest('label')) label = e.closest('label').innerText;
-  if (!label) label = e.getAttribute('aria-label') || e.placeholder || '';
-  return {tag: e.tagName.toLowerCase(), type: e.type || '', name: e.name || '', label: label.trim(),
-          options: e.tagName === 'SELECT' ? Array.from(e.options).map(o => o.text.trim()).filter(Boolean) : []};
-})
-"""
-
-
-def _find_form_frame(page, timeout_s: int):
-    deadline = dt.datetime.now() + dt.timedelta(seconds=timeout_s)
-    while dt.datetime.now() < deadline:
-        for frame in page.frames:
-            try:
-                if frame.locator("input[type=email], input[name*=mail i]").count():
-                    return frame
-            except Exception:
-                continue
-        page.wait_for_timeout(1000)
-    return None
-
-
-def _locate(frame, label: str | None, hints: list[str]):
-    patterns = [re.compile(re.escape(label), re.I)] if label else [re.compile(h, re.I) for h in hints]
-    for pat in patterns:
-        for getter in (frame.get_by_label, frame.get_by_placeholder):
-            loc = getter(pat)
-            if loc.count():
-                return loc.first
-    return None
-
-
-def _set(loc, value: str) -> str | None:
-    """Fill a text field or choose a matching <select> option. Returns the value used."""
-    tag = loc.evaluate("e => e.tagName.toLowerCase()")
-    if tag == "select":
-        options = [o.strip() for o in loc.locator("option").all_inner_texts()]
-        for opt in options:
-            if normalise(opt) == normalise(value):
-                loc.select_option(label=opt)
-                return opt
-        return None
-    loc.fill(value)
-    return value
-
-
-def _options(loc) -> list[str] | None:
-    if loc.evaluate("e => e.tagName.toLowerCase()") != "select":
-        return None
-    return [o.strip() for o in loc.locator("option").all_inner_texts() if o.strip()]
-
-
-def _challenge_visible(page) -> bool:
-    for frame in page.frames:
-        if "recaptcha/api2/bframe" in (frame.url or "") or "recaptcha/enterprise/bframe" in (frame.url or ""):
-            try:
-                el = frame.frame_element()
-                if el.is_visible() and (el.bounding_box() or {}).get("height", 0) > 50:
-                    return True
-            except Exception:
-                continue
-    return False
-
-
-def _open(profile_dir: Path):
+def _open(profile_dir: Path, url: str, headless: bool):
     from playwright.sync_api import sync_playwright
 
     pw = sync_playwright().start()
-    ctx = pw.chromium.launch_persistent_context(str(profile_dir), headless=False)
+    ctx = pw.chromium.launch_persistent_context(str(profile_dir), headless=headless)
+    ctx.set_default_timeout(10000)
     page = ctx.pages[0] if ctx.pages else ctx.new_page()
-    page.goto(SUBS_URL, wait_until="domcontentloaded")
+    page.goto(url, wait_until="domcontentloaded")
     return pw, ctx, page
 
 
@@ -123,72 +65,96 @@ def _wait_for_close(page) -> None:
         pass
 
 
-def inspect_form(profile_dir: Path, timeout_s: int = 45) -> list[dict]:
-    """Open the form and return every visible field with its label and options."""
-    pw, ctx, page = _open(profile_dir)
+def _field(page, label: str, timeout_ms: int = 10000):
+    loc = page.locator("powr-form-builder").get_by_label(label, exact=False).first
+    loc.wait_for(state="visible", timeout=timeout_ms)
+    return loc
+
+
+def _select(page, label: str, option: str) -> None:
+    _field(page, label).select_option(label=option)
+
+
+def _challenge_visible(page) -> bool:
+    for frame in page.frames:
+        url = frame.url or ""
+        if ("recaptcha/api2/bframe" in url or "recaptcha/enterprise/bframe" in url
+                or ("hcaptcha" in url and "challenge" in url)):
+            try:
+                el = frame.frame_element()
+                if el.is_visible() and (el.bounding_box() or {}).get("height", 0) > 50:
+                    return True
+            except Exception:
+                continue
+    return False
+
+
+def _fill_all(page, fill: FormFill, timeout_s: int) -> None:
+    """Fill both pages. Raises SubmitError naming the step that failed."""
+    step = "loading the form"
     try:
-        frame = _find_form_frame(page, timeout_s)
-        if frame is None:
-            raise SubmitError("substitution form not found; the window may be closed")
-        return frame.evaluate(DESCRIBE_JS)
-    finally:
-        ctx.close()
-        pw.stop()
+        _field(page, "Email Address", timeout_s * 1000)
+        step = "Full Name"
+        _field(page, "Full Name").fill(fill.name)
+        step = "Email Address"
+        _field(page, "Email Address").fill(fill.email)
+        step = fill.region_label
+        _select(page, fill.region_label, fill.region)
+        step = fill.subscription_label
+        _select(page, fill.subscription_label, fill.subscription)
+        step = fill.remove_label
+        _select(page, fill.remove_label, fill.remove_option)
+        for label, value in fill.extra.items():
+            step = label
+            _field(page, label).fill(value)
+        step = "Next"
+        page.locator("powr-form-builder").get_by_role("button", name="Next").click()
+        step = fill.box_label
+        _select(page, fill.box_label, fill.box)
+        step = fill.add_label
+        _select(page, fill.add_label, fill.add_option)
+    except SubmitError:
+        raise
+    except Exception as exc:
+        raise SubmitError(f"could not complete '{step}': {str(exc).splitlines()[0]}") from exc
 
 
-def run(fill: FormFill, profile_dir: Path, shots_dir: Path, submit: bool = False, timeout_s: int = 45) -> dict:
+def run(fill: FormFill, profile_dir: Path, shots_dir: Path, submit: bool = False, *,
+        url: str = SUBS_URL, headless: bool = False, wait: bool = True, timeout_s: int = 45) -> dict:
+    """Fill the form. With submit=False (default) it stops for you to review and click Submit."""
     profile_dir.mkdir(parents=True, exist_ok=True)
     shots_dir.mkdir(parents=True, exist_ok=True)
     stamp = dt.datetime.now().strftime("%Y-%m-%d_%H%M%S")
-    pw, ctx, page = _open(profile_dir)
-    result = {"replace": None, "result": "", "screenshot": None, "missing": []}
+    pw, ctx, page = _open(profile_dir, url, headless)
+    result = {"result": "", "screenshot": None, "error": None}
     try:
-        frame = _find_form_frame(page, timeout_s)
-        if frame is None:
-            raise SubmitError("substitution form not found; the window may be closed")
+        try:
+            _fill_all(page, fill, timeout_s)
+        except SubmitError as exc:
+            result["error"] = str(exc)
+            print(f"Stopped: {exc}. Finish the form by hand, then close the browser window.")
+            if wait:
+                _wait_for_close(page)
+            result["result"] = "incomplete, handed over"
+            return result
 
-        email_el = _locate(frame, fill.labels.get("email_label"), EMAIL_HINTS) or \
-            frame.locator("input[type=email], input[name*=mail i]").first
-        email_el.fill(fill.email)
-
-        remove_el = _locate(frame, fill.labels.get("remove_label"), REMOVE_HINTS)
-        if remove_el is None or _set(remove_el, fill.remove) is None:
-            result["missing"].append("item to remove")
-
-        replace_el = _locate(frame, fill.labels.get("replace_label"), REPLACE_HINTS)
-        if replace_el is not None:
-            for cand in fill.candidates:
-                used = _set(replace_el, cand)
-                if used:
-                    result["replace"] = used
-                    break
-        if result["replace"] is None:
-            result["missing"].append("replacement")
-            if replace_el is not None and (opts := _options(replace_el)):
-                result["form_options"] = opts
-
-        for label, value in fill.extra.items():
-            loc = _locate(frame, label, [])
-            if loc is None or _set(loc, value) is None:
-                result["missing"].append(label)
-
-        if not submit or result["missing"]:
-            if result["missing"]:
-                print("Could not fill: " + ", ".join(result["missing"]) + ". Complete these by hand.")
-            print("Form prefilled. Check it, click Submit yourself, then close the browser window.")
-            _wait_for_close(page)
+        if not submit:
+            print("Form filled. Check it, click Submit yourself, then close the browser window.")
+            if wait:
+                _wait_for_close(page)
             result["result"] = "prefilled"
             return result
 
-        frame.locator("button[type=submit], input[type=submit], button:has-text('Submit')").first.click()
+        page.locator("powr-form-builder").get_by_role("button", name="Submit").click()
         page.wait_for_timeout(3000)
         if _challenge_visible(page):
             print("A CAPTCHA challenge appeared. Complete it by hand, then close the browser window.")
-            _wait_for_close(page)
+            if wait:
+                _wait_for_close(page)
             result["result"] = "handed over (captcha)"
             return result
         try:
-            page.get_by_text(re.compile(r"thank|received|submitted|success", re.I)).first.wait_for(timeout=20000)
+            page.locator("powr-form-builder").get_by_text(CONFIRM_RE).first.wait_for(timeout=20000)
             result["result"] = "submitted"
         except Exception:
             result["result"] = "submitted, no confirmation seen"

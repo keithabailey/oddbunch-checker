@@ -1,4 +1,5 @@
 import datetime as dt
+import json
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -10,6 +11,7 @@ FIXTURES = Path(__file__).parent / "fixtures"
 PT = ZoneInfo("America/Vancouver")
 
 SEED_PREFS = """\
+name: Test Person
 email: someone@example.com
 region: west
 box: large-box
@@ -46,3 +48,15 @@ def store(tmp_path, monkeypatch) -> Store:
     s.ensure_dirs()
     s.prefs_path.write_text(SEED_PREFS)
     return s
+
+
+def form_components() -> list[dict]:
+    return json.loads((FIXTURES / "powr_form_2026-11-11.json").read_text())
+
+
+@pytest.fixture(autouse=True)
+def offline_form(monkeypatch):
+    """Never hit POWR in tests: serve the saved form configuration instead."""
+    from oddbunch import form
+
+    monkeypatch.setattr(form, "fetch_components", lambda *a, **k: form_components())

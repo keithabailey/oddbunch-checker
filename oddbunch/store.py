@@ -18,11 +18,14 @@ from ruamel.yaml import YAML
 PREFS_TEMPLATE = """\
 # Odd Bunch box check preferences. Edit by hand; the tool also appends to the lists.
 
-# Account email for the substitution form. Can also come from ODDBUNCH_EMAIL or --email.
+# Account details for the substitution form. Can also come from ODDBUNCH_NAME / ODDBUNCH_EMAIL
+# or --name / --email at run time, so they never need to be stored.
+name:
 email: {email}
 
 region: west          # west = BC & AB, east = ON & QC, prairie = SK & MB
 box: large-box
+subscription:         # as the form spells it; blank = derived from box (large-box -> Large Box)
 timezone: America/Vancouver
 free_swaps_only: true # paid ($0.99) swaps are only listed, and need --allow-paid
 
@@ -32,14 +35,12 @@ remove: []
 # Replacements in order of preference. The first one the form offers that week is used.
 replace_with: []
 
+# The form lets you take the replacement from any box's list. Your own box is searched first,
+# then these (blank = every box, in the form's order). Example: [All Fruit, Medium Box]
+replacement_boxes: []
+
 # Extra spellings to treat as the same item, e.g. "mandarin oranges: clementines".
 aliases: {{}}
-
-# Substitution form field labels, once confirmed on a live Monday (optional).
-form:
-  email_label:
-  remove_label:
-  replace_label:
 
 notify:
   channels: [ntfy, macos]
@@ -52,15 +53,17 @@ check:
 """
 
 DEFAULTS = {
+    "name": None,
     "email": None,
     "region": "west",
     "box": "large-box",
+    "subscription": None,
+    "replacement_boxes": [],
     "timezone": "America/Vancouver",
     "free_swaps_only": True,
     "remove": [],
     "replace_with": [],
     "aliases": {},
-    "form": {},
     "notify": {"channels": ["macos"], "ntfy_server": "https://ntfy.sh", "ntfy_topic": None},
     "check": {"retries": 6, "retry_minutes": 20},
 }
