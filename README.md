@@ -35,19 +35,23 @@ $EDITOR ~/.oddbunch/prefs.yaml            # set remove, replace_with, notify
 
 ## Scheduling
 
-`install-schedule` writes one launchd agent that runs `oddbunch tick` at login, on wake and every
-30 minutes. `tick` works out what is due and does it once:
+`install-schedule` writes one launchd agent that runs `oddbunch tick`. There is no polling timer. It
+starts at login or boot and at three times a week:
 
-| From | Action |
+| When | Action |
 |---|---|
-| Monday 14:30 | Check the menu and send the proposal (retried on each tick until the menu is posted) |
-| Monday 16:30 | One "menu not posted yet" notice, if it still isn't |
+| Monday 14:30 | Check the menu and send the proposal |
 | Monday 19:30 | Reminder, if you haven't approved or skipped |
 | Tuesday 18:00 | Last-chance reminder |
 
-If the Mac is off or asleep at those times, the step runs as soon as it is back on, still inside the
-window. A late start sends a single message rather than every missed one. Outside the window `tick`
-exits immediately without touching the network. Logs go to `~/.oddbunch/logs/`.
+- **Missed times:** a time missed while the Mac was asleep fires once when it wakes; if it was shut
+  down, the login run catches up. A late start sends one message, not every missed one.
+- **Retries:** if the check fails (menu not posted yet, or the site unreachable), the same run retries
+  every 20 minutes until it succeeds or the window closes, with one "not posted yet" notice from 16:30.
+- **Otherwise idle:** outside Monday 14:30 to Tuesday 11:55pm ET, or once the week's check has
+  succeeded, `tick` exits immediately without touching the network.
+
+Logs go to `~/.oddbunch/logs/`.
 
 ## Personal data stays out of the repo
 

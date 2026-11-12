@@ -56,26 +56,45 @@ def test_missed_window_is_logged(store, fixture_html):
     assert store.read_log()[0]["result"] == "window missed"
 
 
-def _tick(store, html, when, note):
-    return flow.run_tick(store, store.load_prefs(), when, fetch=lambda: fresh_menu(html), notifier=note)
+def _tick(store, html, when, note, **kw):
+    kw.setdefault("sleep", lambda s: None)
+    return flow.run_tick(store, store.load_prefs(), when, fetch=lambda: fresh_menu(html), notifier=note, **kw)
 
 
 def test_tick_quiet_outside_window_and_before_check_time(store, fixture_html):
-    note = Recorder()
-    assert _tick(store, fixture_html, pt(2026, 11, 18, 9, 0), note) == "window closed"
-    assert _tick(store, fixture_html, pt(2026, 11, 16, 14, 10), note) == "too early"
-    assert note.calls == []
+    note, fetches = Recorder(), []
+
+    def fetch():
+        fetches.append(1)
+        return fresh_menu(fixture_html)
+
+    for when in (pt(2026, 11, 18, 9, 0), pt(2026, 11, 21, 10, 0), pt(2026, 11, 16, 14, 10)):
+        flow.run_tick(store, store.load_prefs(), when, fetch=fetch, notifier=note)
+    assert fetches == [] and note.calls == []  # no network outside the window
 
 
 def test_tick_normal_week_one_message_per_step(store, fixture_html):
     note = Recorder()
     assert _tick(store, fixture_html, pt(2026, 11, 16, 14, 30), note) == "checked"
-    assert _tick(store, fixture_html, pt(2026, 11, 16, 15, 0), note) == "waiting"
+    assert _tick(store, fixture_html, pt(2026, 11, 16, 15, 0), note).startswith("done for now")
     assert _tick(store, fixture_html, pt(2026, 11, 16, 19, 30), note) == "reminded (evening)"
     assert _tick(store, fixture_html, pt(2026, 11, 16, 20, 0), note) == "already reminded"
     assert _tick(store, fixture_html, pt(2026, 11, 17, 18, 0), note) == "reminded (last-chance)"
     assert len(note.calls) == 3
     assert note.calls[-1][0].startswith("Last chance") and note.calls[-1][2]
+
+
+def test_tick_after_success_does_not_fetch_again(store, fixture_html):
+    note, fetches = Recorder(), []
+
+    def fetch():
+        fetches.append(1)
+        return fresh_menu(fixture_html)
+
+    flow.run_tick(store, store.load_prefs(), pt(2026, 11, 16, 14, 30), fetch=fetch, notifier=note)
+    flow.run_tick(store, store.load_prefs(), pt(2026, 11, 16, 19, 30), fetch=fetch, notifier=note)
+    flow.run_tick(store, store.load_prefs(), pt(2026, 11, 17, 9, 0), fetch=fetch, notifier=note)
+    assert len(fetches) == 1
 
 
 def test_tick_catches_up_when_mac_comes_on_late(store, fixture_html):
@@ -86,15 +105,40 @@ def test_tick_catches_up_when_mac_comes_on_late(store, fixture_html):
     assert len(note.calls) == 1
 
 
-def test_tick_menu_not_posted_notice_once(store, fixture_html):
-    note = Recorder()
-    stale = lambda: parse(fixture_html)
-    run = lambda when: flow.run_tick(store, store.load_prefs(), when, fetch=stale, notifier=note)
-    assert run(pt(2026, 11, 16, 14, 30)) == "menu not posted"
-    assert note.calls == []                       # too early to worry
-    assert run(pt(2026, 11, 16, 16, 30)) == "menu not posted"
-    assert run(pt(2026, 11, 16, 17, 0)) == "menu not posted"
-    assert len(note.calls) == 1 and "not posted" in note.calls[0][0]
+def test_tick_retries_in_process_until_menu_posted(store, fixture_html):
+    note, sleeps = Recorder(), []
+    answers = iter([parse(fixture_html)] * 8 + [fresh_menu(fixture_html)])
+    out = flow.run_tick(store, store.load_prefs(), pt(2026, 11, 16, 14, 30),
+                        fetch=lambda: next(answers), notifier=note, sleep=sleeps.append)
+    assert out == "checked"
+    assert sleeps == [1200] * 8                 # 14:30 .. 17:10, posted on the 9th try
+    titles = [c[0] for c in note.calls]
+    assert titles.count("Odd Bunch: menu not posted yet") == 1   # one notice, from 16:30
+    assert titles[-1].startswith("Odd Bunch NOV 18")
+
+
+def test_tick_retries_network_errors(store, fixture_html):
+    import requests
+
+    note, calls = Recorder(), []
+
+    def flaky():
+        calls.append(1)
+        if len(calls) < 3:
+            raise requests.ConnectionError("offline")
+        return fresh_menu(fixture_html)
+
+    out = flow.run_tick(store, store.load_prefs(), pt(2026, 11, 16, 14, 30),
+                        fetch=flaky, notifier=note, sleep=lambda s: None)
+    assert out == "checked" and len(calls) == 3
+
+
+def test_tick_gives_up_when_window_closes(store, fixture_html):
+    note, sleeps = Recorder(), []
+    out = flow.run_tick(store, store.load_prefs(), pt(2026, 11, 17, 21, 0),
+                        fetch=lambda: parse(fixture_html), notifier=note, sleep=sleeps.append)
+    assert "giving up" in out
+    assert len(sleeps) == 2                     # 21:00, 21:20, 21:40; close is 21:55
 
 
 def test_tick_stops_after_approve_or_skip(store, fixture_html):
@@ -103,5 +147,5 @@ def test_tick_stops_after_approve_or_skip(store, fixture_html):
     pending = store.load_pending()
     pending["status"] = "skipped"
     store.save_pending(pending)
-    assert _tick(store, fixture_html, pt(2026, 11, 16, 19, 30), note) == "nothing to do (skipped)"
+    assert _tick(store, fixture_html, pt(2026, 11, 16, 19, 30), note) == "done for this week (skipped)"
     assert len(note.calls) == 1

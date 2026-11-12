@@ -6,6 +6,8 @@ import datetime as dt
 import time
 from zoneinfo import ZoneInfo
 
+import requests
+
 from . import menu as menu_mod
 from . import notify as notify_mod
 from . import window
@@ -141,13 +143,10 @@ def _at(now: dt.datetime, tz: str, weekday: int, t: dt.time) -> dt.datetime:
     return dt.datetime.combine(monday + dt.timedelta(days=weekday), t, tzinfo=zone)
 
 
-def run_tick(store: Store, prefs: Prefs, now: dt.datetime, *, fetch=None,
-             notifier=notify_mod.notify) -> str:
-    """Do whatever is due right now. Runs at login, on wake and every 30 minutes.
+RETRYABLE = ("menu not posted", "fetch failed")
 
-    Catches up on a missed check or reminder as soon as the Mac is on, and never
-    sends the same message twice in a week. Outside the window it does nothing.
-    """
+
+def _tick_once(store: Store, prefs: Prefs, now: dt.datetime, fetch, notifier) -> str:
     tz = prefs.get("timezone")
     if not window.is_open(now, tz):
         return "window closed"
@@ -161,20 +160,26 @@ def run_tick(store: Store, prefs: Prefs, now: dt.datetime, *, fetch=None,
         state = store.load_state()
         allow_notice = (now >= _at(now, tz, 0, NOT_POSTED_NOTICE_FROM)
                         and state.get("not_posted_notice") != week_key)
-        out = run_check(store, prefs, now, fetch=fetch, notifier=notifier, retries=0,
-                        notify_not_posted=allow_notice)
-        if out is None:
+        try:
+            out = run_check(store, prefs, now, fetch=fetch, notifier=notifier, retries=0,
+                            notify_not_posted=allow_notice)
+            status = "checked" if out is not None else "menu not posted"
+        except (requests.RequestException, menu_mod.MenuError) as exc:
+            print(f"Could not read the menu: {exc}")
             if allow_notice:
-                state["not_posted_notice"] = week_key
-                store.save_state(state)
-            return "menu not posted"
-        return "checked"
+                notifier("Odd Bunch: could not read the menu",
+                         f"{exc}. Still retrying until the window closes.", prefs.section("notify"))
+            status = "fetch failed"
+        if status != "checked" and allow_notice:
+            state["not_posted_notice"] = week_key
+            store.save_state(state)
+        return status
 
     if pending.get("status") != "pending":
-        return f"nothing to do ({pending.get('status')})"
+        return f"done for this week ({pending.get('status')})"
     due = [r for r in REMINDERS if now >= _at(now, tz, r[1], r[2])]
     if not due:
-        return "waiting"
+        return "done for now; reminders later if unanswered"
     label, _, _, urgent = due[-1]
     if label in pending.get("reminded", []):
         return "already reminded"
@@ -183,3 +188,29 @@ def run_tick(store: Store, prefs: Prefs, now: dt.datetime, *, fetch=None,
     pending["reminded"] = sorted(set(pending.get("reminded", [])) | {r[0] for r in due})
     store.save_pending(pending)
     return f"reminded ({label})"
+
+
+def run_tick(store: Store, prefs: Prefs, now: dt.datetime, *, fetch=None,
+             notifier=notify_mod.notify, sleep=time.sleep, clock=None) -> str:
+    """Do whatever is due right now.
+
+    launchd starts this at login/boot, at Monday 14:30 and at the two reminder
+    times (a time missed while asleep fires once on wake). Outside the window, or
+    once the week's check has succeeded, it exits at once without touching the
+    network. If the check fails it keeps retrying in this same process every
+    retry_minutes until it succeeds or the window closes.
+    """
+    tz = prefs.get("timezone")
+    retry = prefs.section("check")["retry_minutes"]
+    t = now
+    while True:
+        status = _tick_once(store, prefs, t, fetch, notifier)
+        if status not in RETRYABLE:
+            return status
+        _, closes = window.window_for(t, tz)
+        nxt = t + dt.timedelta(minutes=retry)
+        if nxt >= closes:
+            return f"{status}; window closes before the next try, giving up this week"
+        print(f"{t.isoformat(timespec='minutes')} {status}; retrying in {retry} min")
+        sleep(retry * 60)
+        t = clock() if clock else nxt

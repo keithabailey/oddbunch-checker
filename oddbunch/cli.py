@@ -64,9 +64,9 @@ def check(no_retry, renotify):
 
 @cli.command()
 def tick():
-    """Do whatever is due now (used by launchd at login, on wake and every 30 min)."""
+    """Do whatever is due now (launchd runs this at login and at the scheduled times)."""
     s = _store()
-    click.echo(f"{now().isoformat(timespec='seconds')} {flow.run_tick(s, s.load_prefs(), now())}")
+    click.echo(f"{now().isoformat(timespec='seconds')} {flow.run_tick(s, s.load_prefs(), now(), clock=now)}")
 
 
 @cli.command()
@@ -254,7 +254,7 @@ def inspect_form():
 @click.option("--load/--no-load", default=True, help="Load the agents into launchd now.")
 @click.option("--label-prefix", default="local.oddbunch", show_default=True)
 def install_schedule(load, label_prefix):
-    """Install the launchd agent: runs `tick` at login, on wake and every 30 minutes."""
+    """Install the launchd agent: `tick` at login, Mon 14:30, Mon 19:30 and Tue 18:00."""
     s = _store()
     click.echo(f"Wrote {schedule.install(s.logs_dir, label_prefix=label_prefix, load=load)}")
 
