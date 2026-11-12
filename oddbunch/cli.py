@@ -254,7 +254,7 @@ def inspect_form():
 @click.option("--load/--no-load", default=True, help="Load the agents into launchd now.")
 @click.option("--label-prefix", default="local.oddbunch", show_default=True)
 def install_schedule(load, label_prefix):
-    """Install the launchd agent: `tick` at login, Mon 14:30, Mon 19:30 and Tue 18:00."""
+    """Install the launchd agent: `tick` at login, Mon 14:30, Mon 19:30 and Tue 15:00."""
     s = _store()
     click.echo(f"Wrote {schedule.install(s.logs_dir, label_prefix=label_prefix, load=load)}")
 

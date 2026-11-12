@@ -12,14 +12,14 @@ AGENTS_DIR = Path("~/Library/LaunchAgents").expanduser()
 # One agent running `oddbunch tick`, which decides what is due:
 #   RunAtLoad             at login / boot (covers a Mac that was shut down); exits at once
 #                         outside the Monday-Tuesday window
-#   StartCalendarInterval Mon 14:30 check, Mon 19:30 and Tue 18:00 reminders; a time missed
+#   StartCalendarInterval Mon 14:30 check, Mon 19:30 and Tue 15:00 reminders; a time missed
 #                         while the Mac was asleep fires once on wake
 # No polling interval: a failed check retries inside the same run until the window closes,
 # and launchd never starts a second copy while one is running.
 TIMES = [
     {"Weekday": 1, "Hour": 14, "Minute": 30},
     {"Weekday": 1, "Hour": 19, "Minute": 30},
-    {"Weekday": 2, "Hour": 18, "Minute": 0},
+    {"Weekday": 2, "Hour": 15, "Minute": 0},
 ]
 LEGACY_JOBS = ("check", "remind")  # v0.1 installed one agent per job
 

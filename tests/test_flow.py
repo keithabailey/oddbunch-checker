@@ -79,7 +79,7 @@ def test_tick_normal_week_one_message_per_step(store, fixture_html):
     assert _tick(store, fixture_html, pt(2026, 11, 16, 15, 0), note).startswith("done for now")
     assert _tick(store, fixture_html, pt(2026, 11, 16, 19, 30), note) == "reminded (evening)"
     assert _tick(store, fixture_html, pt(2026, 11, 16, 20, 0), note) == "already reminded"
-    assert _tick(store, fixture_html, pt(2026, 11, 17, 18, 0), note) == "reminded (last-chance)"
+    assert _tick(store, fixture_html, pt(2026, 11, 17, 15, 0), note) == "reminded (last-chance)"
     assert len(note.calls) == 3
     assert note.calls[-1][0].startswith("Last chance") and note.calls[-1][2]
 

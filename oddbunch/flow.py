@@ -131,7 +131,7 @@ CHECK_FROM = dt.time(14, 30)
 NOT_POSTED_NOTICE_FROM = dt.time(16, 30)
 REMINDERS = [
     ("evening", 0, dt.time(19, 30), False),
-    ("last-chance", 1, dt.time(18, 0), True),
+    ("last-chance", 1, dt.time(15, 0), True),
 ]
 
 

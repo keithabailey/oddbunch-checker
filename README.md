@@ -42,7 +42,7 @@ starts at login or boot and at three times a week:
 |---|---|
 | Monday 14:30 | Check the menu and send the proposal |
 | Monday 19:30 | Reminder, if you haven't approved or skipped |
-| Tuesday 18:00 | Last-chance reminder |
+| Tuesday 15:00 | Last-chance reminder |
 
 - **Missed times:** a time missed while the Mac was asleep fires once when it wakes; if it was shut
   down, the login run catches up. A late start sends one message, not every missed one.
