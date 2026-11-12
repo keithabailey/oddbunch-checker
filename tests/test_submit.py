@@ -52,3 +52,13 @@ def test_bad_option_hands_over_and_never_submits(tmp_path, mock_url):
     res = _run(tmp_path, mock_url, _fill(add_option="Durian - 1 whole"), submit=True)
     assert res["result"] == "incomplete, handed over"
     assert "Item to Add" in res["error"]
+
+
+def test_powr_confirmation_response():
+    url = "https://responsesapi.powr.io/api/form/responses"
+    assert submit.is_confirmation("POST", url, 200, '{"success":true}')
+    assert submit.is_confirmation("POST", url, 200, '{"success": true}')
+    assert not submit.is_confirmation("POST", url, 200, '{"success":false}')
+    assert not submit.is_confirmation("POST", url, 422, '{"success":true}')
+    assert not submit.is_confirmation("GET", url, 200, '{"success":true}')
+    assert not submit.is_confirmation("POST", "https://analytics-api.powr.io/register", 200, '{"success":true}')

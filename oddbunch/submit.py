@@ -13,6 +13,12 @@ so the browser only selects values that are known to exist.
 Guardrails: this never solves, bypasses or outsources a CAPTCHA and uses no stealth
 or fingerprint-masking plugins. If a challenge appears it hands the window to you.
 Default mode only fills the form; you click Submit yourself.
+
+Confirmation: a successful submission is a POST to POWR's responses API answered with
+{"success":true} (seen on the live form, 12 November 2026; the confirmation email
+follows). The browser is watched for that response in both modes, so a Submit you
+click by hand is recorded too. In practice the invisible reCAPTCHA shows a picture
+challenge to an automated click, so --submit usually ends with you solving it.
 """
 
 from __future__ import annotations
@@ -26,6 +32,13 @@ from .form import EMAIL_LABEL, NAME_LABEL
 
 SUBS_URL = "https://www.oddbunch.ca/pages/substitutions"
 CONFIRM_RE = re.compile(r"thank|received|submitted|success", re.I)
+RESPONSES_API = "responsesapi.powr.io/api/form/responses"
+
+
+def is_confirmation(method: str, url: str, status: int, body: str) -> bool:
+    """True for POWR's reply to an accepted submission."""
+    return (method == "POST" and RESPONSES_API in url and 200 <= status < 300
+            and '"success":true' in body.replace(" ", ""))
 
 
 class SubmitError(Exception):
@@ -144,6 +157,18 @@ def run(fill: FormFill, profile_dir: Path, shots_dir: Path, submit: bool = False
     pw, ctx, page = _open(profile_dir, url, headless)
     result = {"result": "", "screenshot": None, "error": None}
     say = (lambda *_: None) if quiet else print
+    accepted = []
+
+    def on_response(resp):
+        if resp.request.method == "POST" and RESPONSES_API in resp.url:
+            try:
+                body = resp.text()
+            except Exception:
+                body = ""
+            if is_confirmation(resp.request.method, resp.url, resp.status, body):
+                accepted.append(resp.url)
+
+    page.on("response", on_response)
     try:
         try:
             _fill_all(page, fill, timeout_s)
@@ -156,25 +181,33 @@ def run(fill: FormFill, profile_dir: Path, shots_dir: Path, submit: bool = False
             return result
 
         if not submit:
-            say("Form filled. Check it, click Submit yourself, then close the browser window.")
+            say("Form filled. Check it, click Submit yourself (and solve the picture puzzle if one "
+                "appears), then close the browser window.")
             if wait:
                 _wait_for_close(page)
-            result["result"] = "prefilled"
+            result["result"] = "submitted by you (POWR confirmed)" if accepted else "prefilled"
             return result
 
         page.locator("powr-form-builder").get_by_role("button", name="Submit").click()
-        page.wait_for_timeout(3000)
-        if _challenge_visible(page):
+        for _ in range(10):
+            page.wait_for_timeout(1000)
+            if accepted or _challenge_visible(page):
+                break
+        if not accepted and _challenge_visible(page):
             say("A CAPTCHA challenge appeared. Complete it by hand, then close the browser window.")
             if wait:
                 _wait_for_close(page)
-            result["result"] = "handed over (captcha)"
+            result["result"] = ("submitted after your CAPTCHA (POWR confirmed)" if accepted
+                                else "handed over (captcha)")
             return result
-        try:
-            page.locator("powr-form-builder").get_by_text(CONFIRM_RE).first.wait_for(timeout=20000)
-            result["result"] = "submitted"
-        except Exception:
-            result["result"] = "submitted, no confirmation seen"
+        if accepted:
+            result["result"] = "submitted (POWR confirmed)"
+        else:
+            try:
+                page.locator("powr-form-builder").get_by_text(CONFIRM_RE).first.wait_for(timeout=20000)
+                result["result"] = "submitted"
+            except Exception:
+                result["result"] = "submitted, no confirmation seen"
         shot = shots_dir / f"{stamp}_substitution.png"
         page.screenshot(path=str(shot), full_page=True)
         result["screenshot"] = str(shot)

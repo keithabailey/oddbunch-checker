@@ -119,11 +119,14 @@ Anything the form needs can be given at run time instead of being stored:
 
 ## Status
 
-Menu parsing, form reading, matching, the window and scheduling are covered by tests. The filler is
-tested against a local mock built from the real form configuration, and a prefill-only run against
-the live form (dummy details, not submitted) reached the Submit button with the right selections. The
-first real submission is the remaining unknown: whether the invisible reCAPTCHA accepts it and what
-the confirmation looks like. The form sends a confirmation email, which is the simplest proof.
+A test submission on 12 November 2026 (outside the window, so not processed) went through end to end
+and the confirmation email arrived. Two things it showed:
+
+- **The CAPTCHA needs a person.** The form's invisible reCAPTCHA showed a picture challenge to the
+  automated Submit click. The tool does not solve or bypass it, so the last step is always yours:
+  `approve` fills both pages, you click Submit and solve the puzzle if one appears.
+- **Success is detectable.** POWR answers an accepted submission with `{"success":true}`. The filler
+  watches for it in both modes, so a Submit you click by hand is still recorded as confirmed.
 
 ## Tests
 
